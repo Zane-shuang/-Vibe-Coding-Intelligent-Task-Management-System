@@ -1,0 +1,61 @@
+# =========================
+# Secrets / API keys
+# =========================
+.env
+.env.*
+*.env
+secrets.*
+*.key
+*.pem
+*.p12
+*.crt
+*.cer
+*.jks
+credentials.json
+
+# =========================
+# Node.js dependencies
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Python virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+
+# =========================
+# Python cache / build artifacts
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# =========================
+# IDE / Editor configs
+# =========================
+.idea/
+.vscode/
+*.iml
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
