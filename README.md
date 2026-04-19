@@ -14,6 +14,10 @@ Backend
 This project is a lightweight task management backend API that supports creating, reading, updating, and deleting tasks.  
 Each task includes title, description, status, priority, and tags. Tasks may **depend on other tasks** (stored in `task_dependencies`): a task cannot be marked `completed` until every **direct** prerequisite task is `completed`. **Hot reads** (`GET /tasks/{task_id}` and `GET /tasks/{task_id}/dependencies`) are backed by **Redis** with TTL-based invalidation on writes. The service is designed with clean layering (`routes -> crud -> models`) so it is easy to maintain and extend.
 
+## Architecture & scaling
+
+Design assumptions for **100k+ tasks**, component boundaries, indexing, caching, dependency-graph costs, and a prioritized roadmap are documented in **[docs/architecture.md](docs/architecture.md)**.
+
 ## Features Implemented
 - [x] Health check endpoint (`GET /health`)
 - [x] Create task (`POST /tasks`)
@@ -32,6 +36,7 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 - [x] **Caching:** Redis keys `task:{id}` and `task_deps:{id}`; invalidated on task update/delete and on dependency add/remove
 - [x] **Latency visibility:** HTTP middleware adds **`X-Process-Time`** response header and logs per-request duration in ms
 - [x] **Load script:** `benchmark.py` (concurrent `GET /tasks/{id}` against a running server)
+- [x] **System design:** architecture and scaling notes ([docs/architecture.md](docs/architecture.md))
 
 ## Setup Instructions
 1. **Prerequisites**
