@@ -276,4 +276,4 @@ Design assumptions for **100k+ tasks**, component boundaries, indexing, caching,
 - Add observability (structured logs, metrics, tracing).
 
 ## Time Spent (up to now)
-Approximately 4 hours
+Approximately 4.5 hours
