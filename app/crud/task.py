@@ -37,10 +37,10 @@ def list_tasks(
     # 2. 加筛选条件（Filtering）
     # 按状态筛选
     if status:
-        query = query.filter(Task.status == TaskStatus(status))
+        query = query.filter(Task.status == status)
     # 按优先级筛选
     if priority:
-        query = query.filter(Task.priority == TaskPriority(priority))
+        query = query.filter(Task.priority == priority)
     # 按标签筛选（MySQL JSON 数组筛选，比如 tags 是 ["docs", "backend"]，筛选包含"docs"的）
     if tag:
         # func.json_contains 是 MySQL 的 JSON 筛选函数，注意参数要和你存的 JSON 格式一致
@@ -70,7 +70,7 @@ def list_tasks(
     query = query.offset(offset).limit(page_size)
 
     # 6. 执行查询，拿到当前页的数据
-    tasks: list[Task] = query.all()
+    tasks = query.all()
 
     # 返回：当前页的任务列表 + 筛选后的总条数
     return tasks, total
