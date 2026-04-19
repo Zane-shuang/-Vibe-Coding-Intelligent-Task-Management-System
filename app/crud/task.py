@@ -1,8 +1,9 @@
 from sqlalchemy.orm import Session
 from app.models.task import Task, TaskStatus, TaskPriority, TaskDependency
-from app.schemas.task import TaskCreate, TaskUpdate, DependencyCreate
+from app.schemas.task import TaskCreate, TaskUpdate, DependencyCreate, TaskOut, DependencyOut
 from sqlalchemy import func
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
+from app.core.cache import cache
 
 # 新增：依赖相关CRUD
 def add_task_dependency(
@@ -45,6 +46,10 @@ def add_task_dependency(
     db.add(new_dep)
     db.commit()
     db.refresh(new_dep)
+
+    # 新增：添加依赖后清除对应缓存
+    cache.delete(f"task_deps:{task_id}")
+
     return new_dep
 
 def remove_task_dependency(
@@ -62,6 +67,9 @@ def remove_task_dependency(
         raise ValueError("依赖关系不存在")
     db.delete(dep)
     db.commit()
+
+    # 新增：删除依赖后清除对应缓存
+    cache.delete(f"task_deps:{task_id}")
 
 def _would_create_cycle(db: Session, from_task_id: int, target_task_id: int) -> bool:
     """
@@ -123,8 +131,20 @@ def create_task(db: Session, data: TaskCreate) -> Task:
     db.refresh(task)
     return task
 
-def get_task(db: Session, task_id: int) -> Task | None:
-    return db.query(Task).filter(Task.id == task_id).first()
+def get_task(db: Session, task_id: int):
+    # 1. 先查缓存
+    cache_key = f"task:{task_id}"
+    cached_task = cache.get(cache_key)
+    if cached_task:
+        # 修复：返回 ORM 结构对象，避免类型错误
+        return Task(**cached_task)
+
+    # 2. 缓存未命中，查数据库
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task:
+        # 3. 存入缓存，下次直接从缓存取
+        cache.set(cache_key, TaskOut.model_validate(task).model_dump(mode="json"))
+    return task
 
 def list_tasks(
     db: Session,
@@ -194,8 +214,45 @@ def update_task(db: Session, task: Task, data: TaskUpdate) -> Task:
 
     db.commit()
     db.refresh(task)
+    # 新增：更新后删除缓存，保证数据一致
+    cache.delete(f"task:{task.id}")
+    # 同时清除依赖缓存
+    cache.delete(f"task_deps:{task.id}")
     return task
 
 def delete_task(db: Session, task: Task) -> None:
     db.delete(task)
     db.commit()
+    # 新增：删除后删除缓存
+    cache.delete(f"task:{task.id}")
+    cache.delete(f"task_deps:{task.id}")
+
+
+def get_task_dependencies(db: Session, task_id: int):
+    # 1. 先查缓存
+    cache_key = f"task_deps:{task_id}"
+    cached_data = cache.get(cache_key)
+
+    if cached_data is not None:
+        return [DependencyOut(**item) for item in cached_data]
+
+    # 2. 缓存没命中，查数据库
+    deps = db.query(TaskDependency) \
+        .filter(TaskDependency.task_id == task_id) \
+        .all()
+
+    # 3. 格式化数据
+    result = []
+    for dep in deps:
+        result.append({
+            "id": dep.id,
+            "task_id": dep.task_id,
+            "depends_on_task_id": dep.depends_on_task_id,
+            "depends_on_task_title": dep.depends_on_task.title if dep.depends_on_task else None
+        })
+
+    # 4. 存入缓存
+    cache.set(cache_key, result)
+
+    # 修复：返回与缓存一致的格式，让路由无警告
+    return [DependencyOut(**item) for item in result]

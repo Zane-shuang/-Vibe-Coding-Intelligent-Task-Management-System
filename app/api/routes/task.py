@@ -5,7 +5,6 @@ from app.core.db import get_db
 from app.schemas.task import TaskCreate, TaskUpdate, TaskOut, TaskListOut, DependencyCreate, DependencyOut
 from app.crud import task as task_crud
 from typing import Optional, Literal, List
-from app.models.task import TaskDependency
 import math
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -111,16 +110,7 @@ def remove_task_dependency(
 # 获取任务的所有直接依赖（给前端展示用）
 @router.get("/{task_id}/dependencies", response_model=List[DependencyOut])
 def get_task_dependencies(
-    task_id: int,
-    db: Session = Depends(get_db)
+        task_id: int,
+        db: Session = Depends(get_db)
 ):
-    deps: list[TaskDependency] = db.query(TaskDependency).filter(TaskDependency.task_id == task_id).all()
-    dep_out_list = []
-    for dep in deps:
-        dep_out_list.append(DependencyOut(
-            id=dep.id,
-            task_id=dep.task_id,
-            depends_on_task_id=dep.depends_on_task_id,
-            depends_on_task_title=dep.depends_on_task.title if dep.depends_on_task else None
-        ))
-    return dep_out_list
+    return task_crud.get_task_dependencies(db, task_id)

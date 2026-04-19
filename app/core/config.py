@@ -3,6 +3,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     APP_NAME: str = "Task Manager API"
     DATABASE_URL: str = "mysql+pymysql://root:123456@127.0.0.1:3306/task_manager?charset=utf8mb4"
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CACHE_ENABLED: bool = True
+    CACHE_TTL: int = 300
 
     class Config:
         env_file = ".env"

@@ -7,17 +7,18 @@ Backend
 - Language: Python 3.13
 - Framework: FastAPI, Pydantic
 - Database: MySQL 8.0
+- Cache: Redis (via `redis` client in `app/core/cache.py`)
 - Other tools: SQLAlchemy, Alembic, Uvicorn, PyMySQL
 
 ## Project Description
 This project is a lightweight task management backend API that supports creating, reading, updating, and deleting tasks.  
-Each task includes title, description, status, priority, and tags. Tasks may **depend on other tasks** (stored in `task_dependencies`): a task cannot be marked `completed` until every **direct** prerequisite task is `completed`. The service is designed with clean layering (`routes -> crud -> models`) so it is easy to maintain and extend.
+Each task includes title, description, status, priority, and tags. Tasks may **depend on other tasks** (stored in `task_dependencies`): a task cannot be marked `completed` until every **direct** prerequisite task is `completed`. **Hot reads** (`GET /tasks/{task_id}` and `GET /tasks/{task_id}/dependencies`) are backed by **Redis** with TTL-based invalidation on writes. The service is designed with clean layering (`routes -> crud -> models`) so it is easy to maintain and extend.
 
 ## Features Implemented
 - [x] Health check endpoint (`GET /health`)
 - [x] Create task (`POST /tasks`)
 - [x] List tasks (`GET /tasks`) with **filtering** (status, priority, tag), **sorting** (`created_at`, `priority`, `status`, `id`), and **pagination** (`page`, `page_size`, `total`, `total_pages`)
-- [x] Database indexes for common list queries (`status`, `priority`, `created_at`) via Alembic migration `089627fac660_add_indexes_for_task_filtering`
+- [x] Database indexes for list queries (initial single-column indexes in `089627fac660_add_indexes_for_task_filtering`; composite index `idx_tasks_status_priority_created_at` and dependency-table indexes in `24077f4738ab_add_indexes_for_the_task_table_and_`)
 - [x] Get task by ID (`GET /tasks/{task_id}`)
 - [x] Update task (`PUT /tasks/{task_id}`)
 - [x] Delete task (`DELETE /tasks/{task_id}`)
@@ -27,11 +28,16 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 - [x] MySQL persistence with SQLAlchemy ORM
 - [x] Database schema migration with Alembic (including `task_dependencies` in `52575d1e52dd_add_task_dependencies_table`)
 - [x] Input validation for status/priority/title length
+- [x] **Performance:** SQLAlchemy **connection pool** tuning (`pool_size`, `max_overflow`, `pool_recycle`, `pool_timeout`) in `app/core/db.py`
+- [x] **Caching:** Redis keys `task:{id}` and `task_deps:{id}`; invalidated on task update/delete and on dependency add/remove
+- [x] **Latency visibility:** HTTP middleware adds **`X-Process-Time`** response header and logs per-request duration in ms
+- [x] **Load script:** `benchmark.py` (concurrent `GET /tasks/{id}` against a running server)
 
 ## Setup Instructions
 1. **Prerequisites**
    - Python 3.13 or newer
    - MySQL 8.0 running locally
+   - **Redis** running locally (default `localhost:6379`) for cached read paths
    - `pip` and virtual environment support
 
 2. **Installation steps**
@@ -39,12 +45,14 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
    - Create virtual environment and install dependencies:
      - `python -m venv .venv`
      - Windows PowerShell: `.venv\Scripts\Activate.ps1`
-     - `pip install fastapi uvicorn sqlalchemy alembic pymysql pydantic-settings`
+     - `pip install fastapi uvicorn sqlalchemy alembic pymysql pydantic-settings redis requests`
 
 3. **Configuration**
    - Create/update `.env` in project root:
      - `APP_NAME=Task Manager API`
      - `DATABASE_URL=mysql+pymysql://<username>:<password>@127.0.0.1:3306/task_manager?charset=utf8mb4`
+     - `REDIS_URL=redis://localhost:6379/0` (defined for future use; `RedisCache` in `app/core/cache.py` currently uses `host=localhost`, `port=6379`)
+     - `CACHE_ENABLED=true`, `CACHE_TTL=300` — present on `Settings`; CRUD calls `cache.set(...)` **without** a TTL argument today, so keys use the **`RedisCache.set` default (3600s)**. Pass `settings.CACHE_TTL` into `cache.set` from `get_task` / `get_task_dependencies` if you want 300s expiry.
    - Create database in MySQL (if not exists):
      - `CREATE DATABASE task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
 
@@ -57,6 +65,10 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
      - Swagger UI: `http://127.0.0.1:8000/docs`
      - ReDoc: `http://127.0.0.1:8000/redoc`
 
+5. **Optional: quick load test**
+   - Start the API, ensure at least one task exists (e.g. id `1`), install `requests`, then run: `python benchmark.py`
+   - Inspect response header **`X-Process-Time`** on any request to see server-side processing time in milliseconds.
+
 ## API Documentation
 
 ### Base URL
@@ -64,6 +76,7 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 
 ### 1) Health Check
 - **Endpoint:** `GET /health`
+- **Response headers:** Every response includes **`X-Process-Time`** (e.g. `12.34ms`) from the timing middleware in `app/main.py`.
 - **Response:**
 ```json
 {
@@ -142,6 +155,7 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 
 ### 4) Get Task by ID
 - **Endpoint:** `GET /tasks/{task_id}`
+- **Caching:** Responses are served from **Redis** key `task:{task_id}` when present (JSON serialized `TaskOut`). Cache is cleared on `PUT` / `DELETE` for that task.
 - **Success Response:** Task object
 - **Error Response (404):**
 ```json
@@ -186,6 +200,7 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 
 ### 8) List Task Dependencies (direct)
 - **Endpoint:** `GET /tasks/{task_id}/dependencies`
+- **Caching:** Results may be read from **Redis** key `task_deps:{task_id}`; invalidated when dependencies are added/removed or the task is updated/deleted.
 - **Response (200):** Array of `DependencyOut` — **immediate** prerequisites only (one hop). To walk a full prerequisite chain, a client can repeat requests or extend the API with a dedicated transitive/tree endpoint.
 
 ### 9) Remove Task Dependency
@@ -208,13 +223,14 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
   - CRUD layer centralizes DB operations.
   - Schemas enforce API contracts.
 - **List endpoint:** filtering and sorting are implemented in the CRUD layer; `sort_by` is restricted to an allow-list mapped to real columns to avoid invalid sort keys. Pagination returns both `items` and `total` so clients can build UI without guessing. The list route uses the query parameter `status` (filter); FastAPI’s HTTP status helpers are imported as `http_status` in code so the name `status` does not clash with `fastapi.status`.
-- **Performance:** partial indexes on `status`, `priority`, and `created_at` support typical filtered/sorted list queries at scale.
+- **Performance:** composite index `idx_tasks_status_priority_created_at` on `tasks` plus indexes on `task_dependencies.task_id` and `task_dependencies.depends_on_task_id` (see migration `24077f4738ab`) support filtered list queries and dependency lookups. SQLAlchemy engine uses an explicit connection pool to reduce handshake overhead under concurrency.
+- **Caching:** Redis stores denormalized JSON for single-task and per-task dependency list reads; write paths delete affected keys so list endpoints do not return stale graphs.
 - **Dependencies:** `task_dependencies` stores directed edges with DB-level uniqueness and a check constraint preventing self-edges; cycle detection is enforced in application code on insert.
 
 ## Design Trade-offs
 - Using synchronous SQLAlchemy sessions keeps implementation simple, but may provide lower throughput than async stack under high concurrency.
 - Storing `tags` as JSON is flexible, but advanced querying/filtering on tags is less efficient than a normalized many-to-many schema.
-- The Alembic revision `52575d1e52dd_add_task_dependencies_table` **drops** the earlier `tasks` list indexes (`ix_tasks_status`, `ix_tasks_priority`, `ix_tasks_created_at`) as part of the autogenerated migration; if you still need those for large lists, consider re-adding them in a follow-up migration.
+- An intermediate migration (`52575d1e52dd`) removed single-column list indexes on `tasks`; a later revision (`24077f4738ab`) adds a **composite** list index and dependency-table indexes—different shape than the original three single-column indexes, tuned for common filter+sort patterns.
 - Single service architecture is easier to ship quickly, but large-scale growth may require decomposition and more infrastructure.
 
 ## Challenges & Solutions
@@ -228,8 +244,16 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
   **Solution:** Use `JSON_CONTAINS` via SQLAlchemy `func.json_contains` for optional `tag` filter; document that `tags` must be a JSON array of strings for the filter to match.
 - **Challenge:** Preventing circular task dependencies while keeping the graph in relational tables.  
   **Solution:** Before inserting an edge, run a BFS from the proposed prerequisite toward tasks that depend on it; if the dependent task is reachable, reject the insert.
+- **Challenge:** Keeping hot read paths fast without stale reads after updates.  
+  **Solution:** Redis cache for `get_task` / `get_task_dependencies` with explicit key deletion after mutations that affect those views.
+
+## Performance notes (< 100 ms goal)
+- Treat **100 ms** as a **local / low-latency** target for **simple reads** (e.g. cached `GET /tasks/{id}`, `GET /health`) under small datasets; measure using **`X-Process-Time`**, `benchmark.py`, or an external tool (wrk, hey).
+- **Writes** (`PUT` with dependency checks, `POST` dependencies with BFS) can exceed 100 ms as data or graph depth grows—document separate SLOs for read vs write if needed.
+- **Redis must be reachable** for cached code paths; there is no in-process fallback if Redis is unavailable (startup or first cache call may error until Redis is up).
 
 ## Known Limitations
+- `CACHE_ENABLED` / `REDIS_URL` in settings are not yet fully wired into `RedisCache` (client uses default host/port); tune `app/core/cache.py` to parse `REDIS_URL` for non-local deployments.
 - No authentication/authorization yet (all task endpoints are public).
 - No dedicated **transitive dependency tree** HTTP endpoint yet; `GET /tasks/{task_id}/dependencies` returns **direct** edges only.
 - No full-text or keyword search on title/description yet (only status/priority/tag filters).
@@ -239,6 +263,7 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 
 ## Future Improvements
 - Add JWT-based authentication and user-level task ownership.
+- Wire `REDIS_URL` and `CACHE_ENABLED` end-to-end (lazy Redis connection, graceful degradation when cache is off).
 - Add keyword / full-text search on title and description.
 - Add comprehensive unit/integration tests and API contract tests.
 - Add Docker and docker-compose for one-command local startup.
@@ -246,4 +271,4 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 - Add observability (structured logs, metrics, tracing).
 
 ## Time Spent (up to now)
-Approximately 3 hours
+Approximately 4 hours

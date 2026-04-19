@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import String, Text, DateTime, Enum, func
+from sqlalchemy import String, Text, DateTime, Enum, func, Index
 from sqlalchemy.dialects.mysql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
@@ -31,6 +31,15 @@ class Task(Base):
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
+    __table_args__ = (
+        Index(
+            "idx_tasks_status_priority_created_at",
+            "status",
+            "priority",
+            "created_at",
+        ),
+    )
+
 class TaskDependency(Base):
     __tablename__ = "task_dependencies"
 
@@ -45,8 +54,10 @@ class TaskDependency(Base):
         UniqueConstraint("task_id", "depends_on_task_id", name="_task_depends_on_uc"),
         # 约束2：不能自己依赖自己（比如任务5不能依赖任务5）
         CheckConstraint("task_id != depends_on_task_id", name="_no_self_dep_ck"),
+        Index("idx_task_dependencies_task_id", "task_id"),
+        Index("idx_task_dependencies_depends_on_task_id", "depends_on_task_id"),
     )
 
     # ORM关系映射，方便查询
-    task = relationship("Task", foreign_keys=[task_id], backref="dependencies")
-    depends_on_task = relationship("Task", foreign_keys=[depends_on_task_id], backref="dependents")
+    task = relationship("Task", foreign_keys="[TaskDependency.task_id]", backref="dependencies")
+    depends_on_task = relationship("Task", foreign_keys="[TaskDependency.depends_on_task_id]", backref="dependents")
