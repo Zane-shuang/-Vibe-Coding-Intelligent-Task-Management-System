@@ -39,3 +39,16 @@ class TaskListOut(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+# 新增：创建依赖的请求模型
+class DependencyCreate(BaseModel):
+    depends_on_task_id: int
+
+# 新增：依赖关系的响应模型
+class DependencyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    depends_on_task_id: int
+    depends_on_task_title: str | None = None

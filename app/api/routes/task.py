@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from sqlalchemy.orm import Session
 from app.core.db import get_db
-from app.schemas.task import TaskCreate, TaskUpdate, TaskOut, TaskListOut
+from app.schemas.task import TaskCreate, TaskUpdate, TaskOut, TaskListOut, DependencyCreate, DependencyOut
 from app.crud import task as task_crud
-from typing import Optional, Literal
+from typing import Optional, Literal, List
+from app.models.task import TaskDependency
 import math
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -45,7 +46,7 @@ def list_tasks(
 
     # 按 TaskListOut 的格式返回
     return TaskListOut(
-        items=tasks,
+        items=[TaskOut.model_validate(t) for t in tasks],
         total=total,
         page=page,
         page_size=page_size,
@@ -73,3 +74,53 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     task_crud.delete_task(db, task)
     return None
+
+# 新增：依赖相关接口
+@router.post("/{task_id}/dependencies", response_model=DependencyOut, status_code=201)
+def add_task_dependency(
+    task_id: int,
+    dep_data: DependencyCreate,
+    db: Session = Depends(get_db)
+):
+    """给任务添加一个依赖关系"""
+    try:
+        dep = task_crud.add_task_dependency(db, task_id=task_id, dep_data=dep_data)
+        # 把被依赖任务的标题也返回，方便前端看
+        dep_out = DependencyOut(
+            id=dep.id,
+            task_id=dep.task_id,
+            depends_on_task_id=dep.depends_on_task_id,
+            depends_on_task_title=dep.depends_on_task.title if dep.depends_on_task else None
+        )
+        return dep_out
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.delete("/{task_id}/dependencies/{depends_on_task_id}", status_code=204)
+def remove_task_dependency(
+    task_id: int,
+    depends_on_task_id: int,
+    db: Session = Depends(get_db)
+):
+    """删除任务的一个依赖关系"""
+    try:
+        task_crud.remove_task_dependency(db, task_id=task_id, depends_on_task_id=depends_on_task_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+# 获取任务的所有直接依赖（给前端展示用）
+@router.get("/{task_id}/dependencies", response_model=List[DependencyOut])
+def get_task_dependencies(
+    task_id: int,
+    db: Session = Depends(get_db)
+):
+    deps: list[TaskDependency] = db.query(TaskDependency).filter(TaskDependency.task_id == task_id).all()
+    dep_out_list = []
+    for dep in deps:
+        dep_out_list.append(DependencyOut(
+            id=dep.id,
+            task_id=dep.task_id,
+            depends_on_task_id=dep.depends_on_task_id,
+            depends_on_task_title=dep.depends_on_task.title if dep.depends_on_task else None
+        ))
+    return dep_out_list
