@@ -18,6 +18,41 @@ Each task includes title, description, status, priority, and tags. Tasks may **d
 
 Design assumptions for **100k+ tasks**, component boundaries, indexing, caching, dependency-graph costs, and a prioritized roadmap are documented in **[docs/architecture.md](docs/architecture.md)**.
 
+## Project structure
+
+This layout follows `routes → crud → models/schemas` (see `app/`). It differs from course examples that use `src/controllers` naming, but maps to the same responsibilities.
+
+```
+Intelligent_Task_Management_System/
+├── README.md
+├── requirements.txt
+├── .gitignore
+├── alembic.ini
+├── benchmark.py
+├── alembic/
+│   ├── env.py
+│   └── versions/                 # database migrations
+├── docs/
+│   └── architecture.md           # scaling & system design
+└── app/
+    ├── main.py                   # FastAPI app + timing middleware
+    ├── api/
+    │   └── routes/
+    │       └── task.py           # HTTP routes (tasks & dependencies)
+    ├── core/
+    │   ├── config.py             # settings (.env)
+    │   ├── db.py                 # SQLAlchemy engine & sessions
+    │   └── cache.py              # Redis wrapper
+    ├── crud/
+    │   └── task.py               # DB logic, cache, dependency rules
+    ├── models/
+    │   └── task.py               # SQLAlchemy ORM models
+    └── schemas/
+        └── task.py               # Pydantic API schemas
+```
+
+There is no `tests/` directory yet (see **Future Improvements**).
+
 ## Features Implemented
 - [x] Health check endpoint (`GET /health`)
 - [x] Create task (`POST /tasks`)
@@ -50,7 +85,7 @@ Design assumptions for **100k+ tasks**, component boundaries, indexing, caching,
    - Create virtual environment and install dependencies:
      - `python -m venv .venv`
      - Windows PowerShell: `.venv\Scripts\Activate.ps1`
-     - `pip install fastapi uvicorn sqlalchemy alembic pymysql pydantic-settings redis requests`
+     - `pip install -r requirements.txt`
 
 3. **Configuration**
    - Create/update `.env` in project root:
@@ -71,7 +106,7 @@ Design assumptions for **100k+ tasks**, component boundaries, indexing, caching,
      - ReDoc: `http://127.0.0.1:8000/redoc`
 
 5. **Optional: quick load test**
-   - Start the API, ensure at least one task exists (e.g. id `1`), install `requests`, then run: `python benchmark.py`
+   - Start the API, ensure at least one task exists (e.g. id `1`), then run: `python benchmark.py` (`requests` is listed in `requirements.txt`)
    - Inspect response header **`X-Process-Time`** on any request to see server-side processing time in milliseconds.
 
 ## API Documentation
